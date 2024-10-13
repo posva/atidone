@@ -1,72 +1,96 @@
 <script setup lang="ts">
+import { useMutation, useQuery, useQueryCache } from '@pinia/colada'
+
 definePageMeta({
   middleware: 'auth'
 })
-const loading = ref(false)
 const newTodo = ref('')
 const newTodoInput = ref(null)
 
 const toast = useToast()
 const { user, clear } = useUserSession()
-const { data: todos, refresh } = await useFetch('/api/todos')
+const queryCache = useQueryCache()
 
-async function addTodo() {
-  if (!newTodo.value.trim()) return
+const $rfetch = useRequestFetch()
+const { data: todos } = useQuery({
+  key: ['todos'],
+  query: () => $rfetch('/api/todos')
+})
 
-  loading.value = true
+const { mutate: addTodo, isLoading: loading } = useMutation({
+  mutation: (title: string) => {
+    if (!title.trim()) throw new Error('Title is required')
 
-  try {
-    const todo = await $fetch('/api/todos', {
+    return $rfetch('/api/todos', {
       method: 'POST',
       body: {
-        title: newTodo.value,
+        title,
         completed: 0
       }
     })
-    todos.value.push(todo)
-    await refresh()
+  },
+
+  async onSuccess(todo) {
+    await queryCache.invalidateQueries({ key: ['todos'] })
     toast.add({ title: `Todo "${todo.title}" created.` })
     newTodo.value = ''
+  },
+
+  onSettled() {
     nextTick(() => {
+      if (!newTodoInput.value?.input) {
+        console.error('Input not found')
+      }
       newTodoInput.value?.input?.focus()
     })
-  }
-  catch (err) {
+  },
+
+  onError(err) {
     if (err.data?.data?.issues) {
-      const title = err.data.data.issues.map(issue => issue.message).join('\n')
+      const title = err.data.data.issues
+        .map(issue => issue.message)
+        .join('\n')
       toast.add({ title, color: 'red' })
     }
   }
-  loading.value = false
-}
+})
 
-async function toggleTodo(todo) {
-  todo.completed = Number(!todo.completed)
-  await $fetch(`/api/todos/${todo.id}`, {
-    method: 'PATCH',
-    body: {
-      completed: todo.completed
+const { mutate: toggleTodo } = useMutation({
+  mutation: todo =>
+    $rfetch(`/api/todos/${todo.id}`, {
+      method: 'PATCH',
+      body: {
+        completed: Number(!todo.completed)
+      }
+    }),
+
+  async onSuccess() {
+    await queryCache.invalidateQueries({ key: ['todos'] })
+  }
+})
+
+const { mutate: deleteTodo } = useMutation({
+  mutation: todo => $rfetch(`/api/todos/${todo.id}`, { method: 'DELETE' }),
+
+  async onSuccess(_result, todo) {
+    await queryCache.invalidateQueries({ key: ['todos'] })
+    toast.add({ title: `Todo "${todo.title}" deleted.` })
+  }
+})
+
+const items = [
+  [
+    {
+      label: 'Logout',
+      icon: 'i-heroicons-arrow-left-on-rectangle',
+      click: clear
     }
-  })
-  await refresh()
-}
-
-async function deleteTodo(todo) {
-  await $fetch(`/api/todos/${todo.id}`, { method: 'DELETE' })
-  todos.value = todos.value.filter(t => t.id !== todo.id)
-  await refresh()
-  toast.add({ title: `Todo "${todo.title}" deleted.` })
-}
-
-const items = [[{
-  label: 'Logout',
-  icon: 'i-heroicons-arrow-left-on-rectangle',
-  click: clear
-}]]
+  ]
+]
 </script>
 
 <template>
-  <UCard @submit.prevent="addTodo">
+  <UCard @submit.prevent="addTodo(newTodo)">
     <template #header>
       <h3 class="text-lg font-semibold leading-6">
         <NuxtLink to="/">

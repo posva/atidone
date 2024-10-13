@@ -5,7 +5,8 @@ export default defineNuxtConfig({
     '@nuxthub/core',
     '@nuxt/ui',
     'nuxt-auth-utils',
-    '@nuxt/eslint'
+    '@nuxt/eslint',
+    '@pinia/nuxt'
   ],
   hub: {
     database: true
