@@ -1,72 +1,109 @@
 <script setup lang="ts">
+import { useMutation, useQuery, useQueryCache } from '@pinia/colada'
+// FIXME: should be the serialized version returned by the API instead
+import type { TodoSelectSchema } from '~~/server/database/schema'
+
 definePageMeta({
   middleware: 'auth'
 })
-const loading = ref(false)
 const newTodo = ref('')
-const newTodoInput = ref(null)
+const newTodoInput = useTemplateRef('todo-input')
 
 const toast = useToast()
 const { user, clear } = useUserSession()
-const { data: todos, refresh } = await useFetch('/api/todos')
+const queryCache = useQueryCache()
 
-async function addTodo() {
-  if (!newTodo.value.trim()) return
+// using $fetch directly doesn't avoid the round trip to the server
+// when doing SSR
+// https://github.com/nuxt/nuxt/issues/24813
+const $rfetch = useRequestFetch()
+const { data: todos } = useQuery({
+  key: ['todos'],
+  // NOTE: the cast sometimes avoids an "Excessive depth check" TS error
+  query: () => $rfetch('/api/todos') as Promise<TodoSelectSchema[]>
+})
 
-  loading.value = true
+const { mutate: addTodo, isLoading: loading } = useMutation({
+  mutation: (title: string) => {
+    if (!title.trim()) throw new Error('Title is required')
 
-  try {
-    const todo = await $fetch('/api/todos', {
+    return $rfetch('/api/todos', {
       method: 'POST',
       body: {
-        title: newTodo.value,
+        title,
         completed: 0
       }
     })
-    todos.value.push(todo)
-    await refresh()
+  },
+
+  async onSuccess(todo) {
+    await queryCache.invalidateQueries({ key: ['todos'] })
     toast.add({ title: `Todo "${todo.title}" created.` })
     newTodo.value = ''
+  },
+
+  onSettled() {
+    // nextTick allows the form to get out of its disabled state which is controlled by `loading`. If we don't do this,
+    // the input is disabled and cannot be focused
     nextTick(() => {
+      if (!newTodoInput.value?.input) {
+        console.error('Input not found')
+      }
       newTodoInput.value?.input?.focus()
     })
-  }
-  catch (err) {
+  },
+
+  onError(err) {
     if (err.data?.data?.issues) {
-      const title = err.data.data.issues.map(issue => issue.message).join('\n')
+      const title = err.data.data.issues
+        .map(issue => issue.message)
+        .join('\n')
       toast.add({ title, color: 'red' })
     }
-  }
-  loading.value = false
-}
-
-async function toggleTodo(todo) {
-  todo.completed = Number(!todo.completed)
-  await $fetch(`/api/todos/${todo.id}`, {
-    method: 'PATCH',
-    body: {
-      completed: todo.completed
+    else {
+      console.error(err)
+      toast.add({ title: 'Unexpected Error', color: 'red' })
     }
-  })
-  await refresh()
-}
+  }
+})
 
-async function deleteTodo(todo) {
-  await $fetch(`/api/todos/${todo.id}`, { method: 'DELETE' })
-  todos.value = todos.value.filter(t => t.id !== todo.id)
-  await refresh()
-  toast.add({ title: `Todo "${todo.title}" deleted.` })
-}
+const { mutate: toggleTodo } = useMutation({
+  mutation: (todo: TodoSelectSchema) =>
+    $rfetch(`/api/todos/${todo.id}`, {
+      method: 'PATCH',
+      body: {
+        completed: Number(!todo.completed)
+      }
+    }),
 
-const items = [[{
-  label: 'Logout',
-  icon: 'i-heroicons-arrow-left-on-rectangle',
-  click: clear
-}]]
+  async onSuccess() {
+    await queryCache.invalidateQueries({ key: ['todos'] })
+  }
+})
+
+const { mutate: deleteTodo } = useMutation({
+  mutation: (todo: TodoSelectSchema) =>
+    $rfetch(`/api/todos/${todo.id}`, { method: 'DELETE' }),
+
+  async onSuccess(_result, todo) {
+    await queryCache.invalidateQueries({ key: ['todos'] })
+    toast.add({ title: `Todo "${todo.title}" deleted.` })
+  }
+})
+
+const items = [
+  [
+    {
+      label: 'Logout',
+      icon: 'i-heroicons-arrow-left-on-rectangle',
+      click: clear
+    }
+  ]
+]
 </script>
 
 <template>
-  <UCard @submit.prevent="addTodo">
+  <UCard @submit.prevent="addTodo(newTodo)">
     <template #header>
       <h3 class="text-lg font-semibold leading-6">
         <NuxtLink to="/">
@@ -94,7 +131,7 @@ const items = [[{
 
     <div class="flex items-center gap-2">
       <UInput
-        ref="newTodoInput"
+        ref="todo-input"
         v-model="newTodo"
         name="todo"
         :disabled="loading"
