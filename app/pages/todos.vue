@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { useMutation, useQuery, useQueryCache } from '@pinia/colada'
-// FIXME: should be the serialized version returned by the API instead
-import type { TodoSelectSchema } from '~~/server/database/schema'
 
 definePageMeta({
   middleware: 'auth'
@@ -20,7 +18,7 @@ const $rfetch = useRequestFetch()
 const { data: todos } = useQuery({
   key: ['todos'],
   // NOTE: the cast sometimes avoids an "Excessive depth check" TS error
-  query: () => $rfetch('/api/todos') as Promise<TodoSelectSchema[]>
+  query: () => $rfetch('/api/todos') as Promise<Todo[]>
 })
 
 const { mutate: addTodo, isLoading: loading } = useMutation({
@@ -68,7 +66,7 @@ const { mutate: addTodo, isLoading: loading } = useMutation({
 })
 
 const { mutate: toggleTodo } = useMutation({
-  mutation: (todo: TodoSelectSchema) =>
+  mutation: (todo: Todo) =>
     $rfetch(`/api/todos/${todo.id}`, {
       method: 'PATCH',
       body: {
@@ -82,7 +80,7 @@ const { mutate: toggleTodo } = useMutation({
 })
 
 const { mutate: deleteTodo } = useMutation({
-  mutation: (todo: TodoSelectSchema) =>
+  mutation: (todo: Todo) =>
     $rfetch(`/api/todos/${todo.id}`, { method: 'DELETE' }),
 
   async onSuccess(_result, todo) {
